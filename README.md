@@ -1,6 +1,16 @@
-# Docker Compose Stack for chs-datastore
+# Airflow Data Store
 
-This Docker Compose stack sets up a complete data storage solution for the **chs-datastore** project. It includes Traefik as a reverse proxy for handling HTTPS connections and SSL certificates, PostgreSQL as the relational database, MinIO as the blob storage server, a FastAPI-based API service, and Apache Airflow for workflow orchestration. Data will be stored in MinIO and accessed through the API service or passed to PostgreSQL for further analysis. Apache Airflow will handle task scheduling and workflow management.
+Sample data store project to be hosted on a remote server or cluster. CICD using GitHub actions for SSH Deploy to remote server for docker compose.
+
+## Components:
+- Orchestration: [Docker Compose](https://docs.docker.com/compose/)
+- Reverse Proxy: [Traefik](https://doc.traefik.io/traefik/)
+- ETL/ELT and Scheduling: [Airflow](https://airflow.apache.org/docs/)
+- Blob Storage: [Minio](https://min.io/docs/minio/linux/index.html)
+- Database: [Postgres](https://www.postgresql.org/docs/)
+- API: [FastAPI](https://fastapi.tiangolo.com/)
+- Web Scraping: [Selenium](https://selenium-python.readthedocs.io/index.html)
+- Notebooks(`local`|`dev`): [Jupyter](https://docs.jupyter.org/en/latest/)
 
 ## Prerequisites
 
@@ -8,7 +18,7 @@ This Docker Compose stack sets up a complete data storage solution for the **chs
 
 ## Usage
 
-Checkout ```./setups/PROJECT_SETUP.md``` and ```./setups/SERVER_SETUP.md``` 
+Checkout ```./.setups/PROJECT_SETUP.md``` and ```./.setups/SERVER_SETUP.md```  for `local` | `dev` | `prod` deployments
 
 ## Services
 
@@ -50,7 +60,7 @@ Checkout ```./setups/PROJECT_SETUP.md``` and ```./setups/SERVER_SETUP.md```
 
 ## Networks
 
-- `STACK_NETWORK_NAME`: The network shared by all services that need to be publicly available via Traefik.
+- `datastore`: The network shared by all services that need to be publicly available via Traefik.
 
 ## Notes
 
@@ -62,8 +72,13 @@ Checkout ```./setups/PROJECT_SETUP.md``` and ```./setups/SERVER_SETUP.md```
 
 - Extend the functionality of the stack by building upon the FastAPI-based API service, Apache Airflow for more complex workflows, and implementing data pipeline executions.
 
-## Resources
+## Whats next
+- [MLFlow](https://mlflow.org/docs/latest/index.html): End-to-End ML management software
+- [Minikube or K8s](https://minikube.sigs.k8s.io/docs/start/): K8s > docker compose just I haven't learned it yet
+- [React](https://legacy.reactjs.org/docs/getting-started.html): Front end for analytics or admin dashboard
+- Multi Stage Deployments: `local`|`feature_branch` -> `dev` -> `main`
 
+## Resources
 - [FastAPI-Traefik-Postgres](https://github.com/tiangolo/full-stack-fastapi-postgresql)
 - [FastAPI-Traefik](https://github.com/tiangolo/blog-posts/tree/master/deploying-fastapi-apps-with-https-powered-by-traefik/app)
 - [Minio-Traefik](https://community.traefik.io/t/minio-and-traefik/18570/7)
@@ -73,3 +88,5 @@ Checkout ```./setups/PROJECT_SETUP.md``` and ```./setups/SERVER_SETUP.md```
 - [Data Pipelines with Apache Airflow](https://github.com/BasPH/data-pipelines-with-apache-airflow/tree/master)
 - [SSH Server](https://www.digitalocean.com/community/tutorials/ssh-essentials-working-with-ssh-servers-clients-and-keys)
 - [GitHub Actions](https://docs.github.com/en/actions)
+
+This data store project is a powerful toolset for managing data workflows and is ready for further customization and expansion to suit specific data science needs.
