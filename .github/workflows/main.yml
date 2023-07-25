@@ -17,7 +17,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script: |
-            cd chs-datastore
+            cd airflow-minio-postgres-fastapi
             git checkout main && git pull origin main
             sudo docker compose -f prod.docker-compose.yml down --remove-orphans
             sudo docker compose -f prod.docker-compose.yml build
