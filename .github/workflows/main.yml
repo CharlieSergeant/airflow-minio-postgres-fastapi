@@ -1,0 +1,44 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH - Build and Deploy
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.HOSTNAME }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          script: |
+            cd chs-datastore
+            git checkout main && git pull origin main
+            sudo docker compose -f prod.docker-compose.yml down --remove-orphans
+            sudo docker compose -f prod.docker-compose.yml build
+            sudo docker compose -f prod.docker-compose.yml up -d
+        env:
+          HOSTNAME: ${{ secrets.HOSTNAME }}
+          DB_HOSTNAME: ${{ secrets.DB_HOSTNAME }}
+          MINIO_ENDPOINT: ${{ secrets.MINIO_ENDPOINT }}
+          MINIO_ROOT_USER: ${{ secrets.MINIO_ROOT_USER }}
+          MINIO_ROOT_PASSWORD: ${{ secrets.MINIO_ROOT_PASSWORD }}
+          MINIO_SUPERUSER_USERNAME: ${{ secrets.MINIO_SUPERUSER_USERNAME }}
+          MINIO_SUPERUSER_PASSWORD: ${{ secrets.MINIO_SUPERUSER_PASSWORD }}
+          MINIO_ACCESS_KEY: ${{ secrets.MINIO_ACCESS_KEY }}
+          MINIO_SECRET_KEY: ${{ secrets.MINIO_SECRET_KEY }}
+          POSTGRES_SERVER: ${{ secrets.POSTGRES_SERVER }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          API_KEY: ${{ secrets.API_KEY }}
+          TRAEFIK_ADMIN: ${{ secrets.TRAEFIK_ADMIN }}
+          STACK_ADMIN_EMAIL: ${{ secrets.STACK_ADMIN_EMAIL }}
+      - name: Finished
+        run: |
+          echo Build and Deploy Complete

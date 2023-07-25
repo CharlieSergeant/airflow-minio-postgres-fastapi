@@ -1,0 +1,286 @@
+version: '3.9'
+# Local Docker Stack to run:
+# - Airflow Scheduler
+# - Airflow Webserver
+# - Jupyter Server
+# Allows the user to access the remote minio, fastapi, postgres
+# instances but use a local scheduling service to test out airflow dag runs
+
+# rotating logs so they do not overflow
+x-logging:
+  logging: &default-logging
+    driver: "local"
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  traefik:
+    image: "traefik:v2.10"
+    container_name: "traefik"
+    restart: always
+    volumes:
+      # Add Docker as a mounted volume, so that Traefik can read the labels of other services
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Mount the volume to store the certificates
+      - traefik-public-certificates:/certificates
+    ports:
+      - "80:80"
+    labels:
+      # Enable Traefik for this service, to make it available in the public network
+      - traefik.enable=true
+      - traefik.docker.network=datastore
+      - traefik.http.services.traefik-dashboard.loadbalancer.server.port=8080
+      # Make Traefik use this domain in HTTP
+      - traefik.http.routers.traefik-dashboard-http.entrypoints=http
+      - traefik.http.routers.traefik-dashboard-http.rule=Host(`localhost`)
+      - traefik.http.routers.traefik-dashboard-http.service=api@internal
+    command:
+      - --providers.docker
+      - --providers.docker.exposedbydefault=false
+      - --api.insecure=true
+      - --log.level=DEBUG
+      - --accesslog
+      - --entrypoints.http.address=:80
+    networks:
+      # Use the public network created to be shared between Traefik and
+      # any other service that needs to be publicly available with HTTPS
+      - datastore
+  postgres:
+    image: postgres:15.1-alpine
+    container_name: "postgres"
+    restart: unless-stopped
+    logging: *default-logging
+    volumes:
+      - ./postgres-data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_SERVER=${POSTGRES_SERVER}
+    ports:
+      - "5432:5432"
+    networks:
+      # Use the public network created to be shared between Traefik and
+      # any other service that needs to be publicly available with HTTPS
+      - datastore
+  minio:
+    image: minio/minio
+    container_name: "minio"
+    restart: unless-stopped
+    logging: *default-logging
+    volumes:
+      - ./file-storage:/data
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+    labels:
+      # Enable Traefik for this specific "backend" service
+      - traefik.enable=true
+      # Define the port inside of the Docker service to use
+      - traefik.http.services.s3.loadbalancer.server.port=9000
+      - traefik.http.routers.s3-http.entrypoints=http
+      - traefik.http.routers.s3-http.service=s3
+      - traefik.http.routers.s3-http.rule=Host(`s3.localhost`)
+      # Define the port inside of the Docker service to use
+      - traefik.http.services.s3console.loadbalancer.server.port=9001
+      - traefik.http.routers.s3console-http.entrypoints=http
+      - traefik.http.routers.s3console-http.service=s3console
+      - traefik.http.routers.s3console-http.rule=Host(`s3console.localhost`)
+      - traefik.docker.network=datastore
+    networks:
+      # Use the public network created to be shared between Traefik and
+      # any other service that needs to be publicly available with HTTPS
+      - datastore
+    command: server --address ":9000" --console-address ":9001" /data
+  api:
+    build:
+      context: .
+      dockerfile: .docker/fastapi/Dockerfile
+    container_name: "api"
+    image: "chs_fastapi"
+    restart: always
+    logging: *default-logging
+    volumes:
+      - ./backend:/app/backend
+    environment:
+      - POSTGRES_SERVER=${POSTGRES_SERVER}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - MINIO_HOST=minio:9000
+      - HOSTNAME=${HOSTNAME}
+    depends_on:
+      - postgres
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 80
+    labels:
+      # Enable Traefik for this specific "backend" service
+      - traefik.enable=true
+      # Define the port inside of the Docker service to use
+      - traefik.http.services.app.loadbalancer.server.port=80
+      # Make Traefik use this domain in HTTP
+      - traefik.http.routers.app-http.entrypoints=http
+      - traefik.http.routers.app-http.rule=Host(`fastapi.localhost`)
+      # Use the traefik-public network (declared below)
+      - traefik.docker.network=datastore
+    networks:
+      # Use the public network created to be shared between Traefik and
+      # any other service that needs to be publicly available with HTTPS
+      - datastore
+  webserver:
+    build:
+      context: .
+      dockerfile: .docker/airflow/Dockerfile
+    container_name: "airflow-web"
+    command: webserver
+    depends_on:
+      - postgres
+      - scheduler
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow
+      - AIRFLOW__DATABASE__LOAD_DEFAULT_CONNECTIONS=False
+      - AIRFLOW__CORE__LOAD_EXAMPLES=FALSE
+      - AIRFLOW__CORE__STORE_DAG_CODE=True
+      - AIRFLOW__CORE__STORE_SERIALIZED_DAGS=True
+      - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=True
+      - AIRFLOW__WEBSERVER__RBAC=False
+      - AIRFLOW__WEBSERVER__SESSION_BACKEND=database
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - HOSTNAME=${HOSTNAME}
+      - DB_HOSTNAME=${DB_HOSTNAME}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./packages.txt:/opt/airflow/packages.txt
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./include:/opt/airflow/include
+      - downloads:/usr/local/airflow/downloads
+    labels:
+      # Enable Traefik for this specific "api" service
+      - traefik.enable=true
+      - traefik.docker.network=datastore
+      # Define the port inside of the Docker service to use
+      - traefik.http.services.scheduler.loadbalancer.server.port=8080
+      - traefik.http.routers.scheduler-http.service=scheduler
+      - traefik.http.routers.scheduler-http.entrypoints=http
+      - traefik.http.routers.scheduler-http.rule=Host(`scheduler.localhost`)
+    networks:
+      # Use the public network created to be shared between Traefik and
+      # any other service that needs to be publicly available with HTTPS
+      - datastore
+  scheduler:
+    build:
+      context: .
+      dockerfile: .docker/airflow/Dockerfile
+    container_name: "scheduler"
+    command: scheduler
+    depends_on:
+      - postgres
+      - init
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow
+      - AIRFLOW__DATABASE__LOAD_DEFAULT_CONNECTIONS=False
+      - AIRFLOW__CORE__LOAD_EXAMPLES=FALSE
+      - AIRFLOW__CORE__STORE_DAG_CODE=True
+      - AIRFLOW__CORE__STORE_SERIALIZED_DAGS=True
+      - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=True
+      - AIRFLOW__WEBSERVER__RBAC=False
+      - AIRFLOW__WEBSERVER__SESSION_BACKEND=database
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - HOSTNAME=${HOSTNAME}
+      - DB_HOSTNAME=${DB_HOSTNAME}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./include:/opt/airflow/include
+      - ./packages.txt:/opt/airflow/packages.txt
+      - /var/run/docker.sock:/var/run/docker.sock
+      - downloads:/usr/local/airflow/downloads
+    networks:
+      # Use the public network created to be shared between Traefik and
+      # any other service that needs to be publicly available with HTTPS
+      - datastore
+
+  init:
+    build:
+      context: .
+      dockerfile: .docker/airflow/Dockerfile
+    container_name: "airflow-init"
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow
+      - AIRFLOW__DATABASE__LOAD_DEFAULT_CONNECTIONS=False
+      - AIRFLOW__CORE__LOAD_EXAMPLES=FALSE
+      - AIRFLOW__CORE__STORE_DAG_CODE=True
+      - AIRFLOW__CORE__STORE_SERIALIZED_DAGS=True
+      - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=True
+      - AIRFLOW__WEBSERVER__RBAC=False
+      - AIRFLOW__WEBSERVER__SESSION_BACKEND=database
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - HOSTNAME=${HOSTNAME}
+      - DB_HOSTNAME=${DB_HOSTNAME}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    depends_on:
+      - postgres
+    entrypoint: /bin/bash
+    command: >
+      -c 'sleep 5 && airflow db init && sleep 3 && airflow users create --username ${POSTGRES_USER} --password ${POSTGRES_PASSWORD} --firstname Super --lastname Admin --role Admin --email ${STACK_ADMIN_EMAIL}'
+    networks:
+      # Use the public network created to be shared between Traefik and
+      # any other service that needs to be publicly available with HTTPS
+      - datastore
+  jupyter:
+    build:
+      context: .
+      dockerfile: .docker/jupyter/Dockerfile
+    container_name: "jupyter"
+    image: "chs_jupyter"
+    command: [ "jupyter", "notebook", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--allow-root" ]
+    environment:
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - HOSTNAME=${HOSTNAME}
+      - DB_HOSTNAME=${DB_HOSTNAME}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    ports:
+      - "8888:8888"
+    volumes:
+      - './dev/notebooks/:/home/jovyan/work'
+    networks:
+      # Use the public network created to be shared between Traefik and
+      # any other service that needs to be publicly available with HTTPS
+      - datastore
+volumes:
+  file-storage:
+  postgres-data:
+  # Create a volume to store the certificates, there is a constraint to make sure
+  # Traefik is always deployed to the same Docker node with the same volume containing
+  # the HTTPS certificates
+  traefik-public-certificates:
+  downloads:
+    external: true
+
+networks:
+  # Use the previously created public network "datastore", shared with other
+  # services that need to be publicly available via this Traefik
+  datastore:
+    external: true
